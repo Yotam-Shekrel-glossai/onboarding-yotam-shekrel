@@ -8,7 +8,7 @@
       "lambda_memory_size": 128,
       "region": "us-east-2",
       "manage-iam-role": false,
-      "iam_rule_irn": "arn:aws:iam::093097350274:role/onboarding-chalice-s3-dynamodb-yotam-shekrel"
+      "iam_role_irn": "arn:aws:iam::093097350274:role/onboarding-chalice-s3-dynamodb-yotam-shekrel"
     }
   }
 }
