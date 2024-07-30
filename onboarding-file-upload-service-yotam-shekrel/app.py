@@ -31,20 +31,29 @@ def post():
     return {'file_id': file_id, 'message': 'File uploaded successfully!'}
 
 
-@app.route('/get-item/{key}', methods=['GET'])
-def get(key):
+@app.route('/get-item/{client_id}', methods=['GET'])
+def get_by_client_id(client_id):
+
     try:
-        response = s3_client.get_object(Bucket=s3_BUCKET_NAME, Key=key) # trying to get the item
-        content = response['Body'].read().decode('utf-8')
+        response = s3_client.list_objects_v2(Bucket=s3_BUCKET_NAME) 
+        files = response.get('Contents', [])
+
+        client_files = []
+
+        for file in files:
+            head_response = s3_client.head_object(Bucket=s3_BUCKET_NAME, Key=file['Key'])
+            if head_response['Metadata'].get('client_id') == client_id:
+                client_files.append(file['Key'])
+
+
+         # not found
+        if len(client_files) == 0:
+            return Response(body=str('No files were found for '+ client_id))
         
         # Return the content as a response
-        return Response(body=content,
-                        headers={'Content-Type': 'text/plain'})
-    # not found
-    except s3_client.exceptions.NoSuchKey:
-        return Response(body='Item not found',
-                        headers={'Content-Type': 'text/plain'})
-    
+        return Response(body=('Success!\n'+str(len(client_files))+' files were found for '+str(client_id)+'\n'+str(client_files)+':\n'),
+                        headers={'Content-Type': 'application/json'})
+
     # error
     except Exception as e:
         return Response(body=f'Error getting item: {str(e)}',
