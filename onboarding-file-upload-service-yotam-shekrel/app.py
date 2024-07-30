@@ -12,6 +12,7 @@ metadata_table = dynamodb.Table('onboarding-file-metadata-table-yotam-shekrel')
 def index():
     return {'hello': 'world', 'my' : 'check'}
 
+# extract the file name from the request 
 def parse_multipart_formdata(data):
     parsed_data = {}
     lines = data.split('\r\n')
@@ -96,7 +97,7 @@ def post():
     return {'file_id': file_id, 'message': 'File uploaded and metadata stored successfully! Client id: '+client_id+' File id: '+ file_id}
 
 
-@app.route('/get-item/{client_id}', methods=['GET'])
+@app.route('/get_by_client_id/{client_id}', methods=['GET'])
 def get_by_client_id(client_id):
 
     try:
@@ -123,3 +124,23 @@ def get_by_client_id(client_id):
     except Exception as e:
         return Response(body=f'Error getting item: {str(e)}',
                         headers={'Content-Type': 'text/plain'})
+
+@app.route('/get_by_file_id/{file_id}', methods=['GET'])
+def get_by_file_id(file_id):
+
+    try:
+        response = metadata_table.get_item(Key={'fileId': file_id})
+        item = response.get('Item')
+         
+        if not item:
+            return Response(body=f"No metadata found for file ID {file_id}",
+                            headers={'Content-Type': 'text/plain'},
+                            status_code=404)
+        
+        return Response(body=item,
+                        headers={'Content-Type': 'application/json'})
+    
+    except Exception as e:
+        return Response(body=f"Error retrieving metadata: {str(e)}",
+                        headers={'Content-Type': 'text/plain'},
+                        status_code=500)
