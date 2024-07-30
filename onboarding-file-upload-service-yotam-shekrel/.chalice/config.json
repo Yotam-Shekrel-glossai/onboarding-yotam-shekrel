@@ -3,6 +3,9 @@
   "app_name": "onboarding-file-upload-service-yotam-shekrel",
   "stages": {
     "dev": {
+      "environment_variables": {
+      "DYNAMODB_TABLE_NAME": "onboarding-file-metadata-table-yotam-shekrel",
+      "S3_BUCKET_NAME": "onboarding-file-upload-bucket-yotam-shekrel1"},
       "api_gateway_stage": "api",
       "lambda_timeout": 60,
       "lambda_memory_size": 128,
