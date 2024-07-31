@@ -1,6 +1,5 @@
 from chalice import Chalice, Response
 import boto3
-import os
 
 app = Chalice(app_name='onboarding-file-upload-service-yotam-shekrel')
 s3_BUCKET_NAME = 'onboarding-file-upload-bucket-yotam-shekrel1'
@@ -237,3 +236,30 @@ def update_file_id(old_file_id):
             return Response(body=f"Error updating file ID or client ID: {str(e)}", headers={'Content-Type': 'text/plain'}, status_code=500)
 
     return Response(body="Unsupported content type", headers={'Content-Type': 'text/plain'}, status_code=400)
+
+# S3 Event Handler
+@app.on_s3_event(bucket=s3_BUCKET_NAME, events=['s3:ObjectCreated:*'])
+def handle_s3_event(event):
+    try:
+        # Retrieve the S3 object key
+        key = event.key
+        
+        # Get object metadata
+        get_response = s3_client.get_object(Bucket=s3_BUCKET_NAME, Key=key)
+        print(f"Get Object Response: {get_response}")
+
+        client_id = get_response['Metadata'].get('client_id')
+        
+        if client_id:
+        # Put item in DynamoDB
+            metadata_table.put_item(Item={
+                'fileId': key,
+                'client_id': client_id,
+                'key': key
+            })
+            print(f"Added item to DynamoDB with client_id {client_id} and key {key}")
+        else:
+            print(f"No client_id metadata found for S3 object {key}")
+            
+    except Exception as e:
+        print(f"Error processing S3 event: {str(e)}")
