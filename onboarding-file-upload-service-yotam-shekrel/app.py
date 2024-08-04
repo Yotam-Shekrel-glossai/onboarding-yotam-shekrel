@@ -9,10 +9,11 @@ metadata_table = dynamodb.Table('onboarding-file-metadata-table-yotam-shekrel')
 
 @app.route('/')
 def index():
-    return {'hello': 'world', 'my' : 'check'}
+    # Simple endpoint to check if the service is running
+    return {'hello': 'world', 'sanity' : 'check'}
 
-# extract the file name from the request 
 def parse_multipart_formdata(data):
+    # Function to parse multipart/form-data
     parsed_data = {}
     lines = data.split('\r\n')
     boundary = lines[0]
@@ -57,47 +58,52 @@ def parse_multipart_formdata(data):
 
 @app.route('/post', methods=['POST'], content_types=['multipart/form-data'])
 def post():
+    # Endpoint to handle file uploads
     request = app.current_request 
-    multipart_params = request.raw_body.decode().split('\r\n') #the request as string
+    multipart_params = request.raw_body.decode().split('\r\n')  # Decode the request body
 
     file_data = None
     for i in range(len(multipart_params)):
-
         if 'filename' in multipart_params[i]:
-            file_data = multipart_params[i+3].encode('utf-8')
+            file_data = multipart_params[i+3].encode('utf-8')  # Extract file data
 
-            #finds the file name
+            # Extract file name from Content-Disposition header
             disposition_parts = multipart_params[i].split(';')
             for part in disposition_parts:
                 if 'filename' in part:
                     file_id = part.split('=')[1].strip().strip('"')
             break
 
-    ## handle input error
+    # Handle input error
     if file_data is None or file_id is None:
-         return Response(body="ERROR, no file was given by the user", headers={'Content-Type': 'text/plain'})
+        return Response(body="ERROR, no file was given by the user", headers={'Content-Type': 'text/plain'})
 
+    # Extract client ID from query parameters
     client_id = request.query_params.get('client_id')
     if client_id is None:
         return Response(body="ERROR, no client ID was given by the user", headers={'Content-Type': 'text/plain'})
     
     key = f"{file_id}"
 
-    # post the file in s3 bucket
-    s3_client.put_object(Bucket=s3_BUCKET_NAME, Key=key, Body=file_data,Metadata={'client_id': client_id})
+    # Check if a file with the same ID already exists
+    if get_by_file_id(file_id).status_code == 200:
+        return Response(body=f"File name: {file_id} already exists. Please change the file name and try again.", headers={'Content-Type': 'text/plain'}, status_code=200)
+
+    # Upload the file to the S3 bucket
+    s3_client.put_object(Bucket=s3_BUCKET_NAME, Key=key, Body=file_data, Metadata={'client_id': client_id})
     
-    # post the file metadata in dynamoDB table
+    # Store file metadata in DynamoDB
     metadata_table.put_item(Item={
         'fileId' : file_id,
         'client_id': client_id,
         'key': key
     })
 
-    return {'file_id': file_id, 'message': 'File uploaded and metadata stored successfully! Client id: '+client_id+' File id: '+ file_id}
+    return Response(body=f"File uploaded and metadata stored successfully! Client id: {client_id} File id: {file_id}", headers={'Content-Type': 'text/plain'}, status_code=200)
 
 @app.route('/get_by_client_id/{client_id}', methods=['GET'])
 def get_by_client_id(client_id):
-
+    # Endpoint to retrieve files by client ID
     try:
         response = s3_client.list_objects_v2(Bucket=s3_BUCKET_NAME) 
         files = response.get('Contents', [])
@@ -105,71 +111,61 @@ def get_by_client_id(client_id):
         client_files = []
 
         for file in files:
+            # Check metadata to filter files by client ID
             head_response = s3_client.head_object(Bucket=s3_BUCKET_NAME, Key=file['Key'])
             if head_response['Metadata'].get('client_id') == client_id:
                 client_files.append(file['Key'])
 
-
-         # not found
+        # Handle case where no files are found
         if len(client_files) == 0:
-            return Response(body=str('No files were found for '+ client_id))
+            return Response(body=f'No files were found for {client_id}', headers={'Content-Type': 'application/json'}, status_code=400)
         
+        thelen = len(client_files)
         # Return the content as a response
-        return Response(body=('Success!\n'+str(len(client_files))+' files were found for '+str(client_id)+'\n'+str(client_files)+':\n'),
-                        headers={'Content-Type': 'application/json'})
+        return Response(body=f'Success! {thelen} files were found for {client_id} are: {client_files}', headers={'Content-Type': 'application/json'}, status_code=200)
 
-    # error
+    # Handle errors
     except Exception as e:
-        return Response(body=f'Error getting item: {str(e)}',
-                        headers={'Content-Type': 'text/plain'})
+        return Response(body=f'Error getting item: {e}', headers={'Content-Type': 'application/json'}, status_code=400)
 
 @app.route('/get_by_file_id/{file_id}', methods=['GET'])
 def get_by_file_id(file_id):
-
+    # Endpoint to retrieve file metadata by file ID
     try:
         response = metadata_table.get_item(Key={'fileId': file_id})
         item = response.get('Item')
          
         if not item:
-            return Response(body=f"No metadata found for file ID {file_id}",
-                            headers={'Content-Type': 'text/plain'},
-                            status_code=404)
+            return Response(body=f"No metadata found for file ID {file_id}", headers={'Content-Type': 'application/json'}, status_code=404)
         
-        return Response(body=item,
-                        headers={'Content-Type': 'application/json'}, status_code=200)
+        return Response(body=item, headers={'Content-Type': 'application/json'}, status_code=200)
     
     except Exception as e:
-        return Response(body=f"Error retrieving metadata: {str(e)}",
-                        headers={'Content-Type': 'text/plain'},
-                        status_code=500)
-    
+        return Response(body=f"Error retrieving metadata: {str(e)}", headers={'Content-Type': 'application/json'}, status_code=500)
+
 @app.route('/delete/{file_id}', methods=['DELETE'])
 def delete(file_id):
+    # Endpoint to delete file and its metadata
     try:
         response = metadata_table.get_item(Key={'fileId': file_id})
         
         if 'Item' not in response:
-            return Response(body=f"No file with ID {file_id} was found",
-                            headers={'Content-Type': 'text/plain'},
-                            status_code=404)
+            return Response(body=f"No file with ID {file_id} was found", headers={'Content-Type': 'text/plain'}, status_code=404)
+        
         # Delete the file from the S3 bucket
         s3_client.delete_object(Bucket=s3_BUCKET_NAME, Key=file_id)
         
         # Delete the metadata from the DynamoDB table
         metadata_table.delete_item(Key={'fileId': file_id})
-        
 
-        return Response(body=f"File with ID {file_id} and its metadata deleted successfully.",
-                        headers={'Content-Type': 'text/plain'})
+        return Response(body=f"File with ID {file_id} and its metadata deleted successfully.", headers={'Content-Type': 'text/plain'}, status_code=200)
             
-
     except Exception as e:
-        return Response(body=f"Error deleting file and metadata: {str(e)}",
-                        headers={'Content-Type': 'text/plain'},
-                        status_code=500)
+        return Response(body=f"Error deleting file and metadata: {str(e)}", headers={'Content-Type': 'text/plain'}, status_code=500)
 
 @app.route('/update/{old_file_id}', methods=['PUT'], content_types=['application/json'])
 def update_file_id(old_file_id):
+    # Endpoint to update file ID and/or client ID
     request = app.current_request
     content_type = request.headers.get('Content-Type', '')
 
@@ -187,11 +183,9 @@ def update_file_id(old_file_id):
             item = response.get('Item')
 
             if not item:
-                return Response(body=f"No metadata found for file ID {old_file_id}",
-                                headers={'Content-Type': 'text/plain'},
-                                status_code=404)
+                return Response(body=f"No metadata found for file ID {old_file_id}", headers={'Content-Type': 'text/plain'}, status_code=404)
 
-            # Determine the new file ID
+            # Determine the new file ID and client ID
             final_file_id = new_file_id if new_file_id else old_file_id
             final_client_id = new_client_id if new_client_id else item['client_id']
 
@@ -208,7 +202,6 @@ def update_file_id(old_file_id):
 
                 # Delete the old file
                 s3_client.delete_object(Bucket=s3_BUCKET_NAME, Key=old_file_id)
-
             else:
                 # Update the metadata in S3 if only the client ID has changed
                 s3_client.copy_object(
@@ -237,9 +230,10 @@ def update_file_id(old_file_id):
 
     return Response(body="Unsupported content type", headers={'Content-Type': 'text/plain'}, status_code=400)
 
-# S3 Event Handler
+# S3 Event Handler for Object Creation
 @app.on_s3_event(bucket=s3_BUCKET_NAME, events=['s3:ObjectCreated:*'])
-def handle_s3_event(event):
+def handle_s3_up(event):
+    # Handle S3 Object Created event
     try:
         # Retrieve the S3 object key
         key = event.key
@@ -251,7 +245,7 @@ def handle_s3_event(event):
         client_id = get_response['Metadata'].get('client_id')
         
         if client_id:
-        # Put item in DynamoDB
+            # Put item in DynamoDB
             metadata_table.put_item(Item={
                 'fileId': key,
                 'client_id': client_id,
@@ -263,3 +257,14 @@ def handle_s3_event(event):
             
     except Exception as e:
         print(f"Error processing S3 event: {str(e)}")
+
+# S3 Event Handler for Object Deletion
+@app.on_s3_event(bucket=s3_BUCKET_NAME, events=['s3:ObjectRemoved:*'])
+def handle_s3_del(event):
+    # Handle S3 Object Removed event
+    try:
+        key = event.key
+        metadata_table.delete_item(Key={'fileId': key})
+        print(f"Deleted metadata for file ID {key} from DynamoDB")
+    except Exception as e:
+        print(f"Error processing S3 delete event: {str(e)}")
